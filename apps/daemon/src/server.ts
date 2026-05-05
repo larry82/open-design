@@ -2824,6 +2824,68 @@ export async function startServer({ port = 7456, host = process.env.OD_BIND_HOST
     }
   });
 
+  // [BAiR] Export an HTML artifact's 1080x1920 artboard (.dc-card) as a PNG
+  // suitable for IG Story / 9:16 surfaces. Spawns scripts/export-ig-story.mjs.
+  // GET ?file=<name.html>&card=<n>           → image/png
+  // GET ?file=<name.html>&list=1             → JSON { url, cards }
+  app.get('/api/projects/:id/export-ig-story', async (req, res) => {
+    try {
+      const fileName = String(req.query.file || '');
+      const list = req.query.list === '1' || req.query.list === 'true';
+      const card = Math.max(0, Number(req.query.card ?? 0) | 0);
+      const scale = Math.max(1, Math.min(4, Number(req.query.scale ?? 2)));
+      if (!fileName) {
+        sendApiError(res, 400, 'BAD_REQUEST', 'missing file query param');
+        return;
+      }
+      const repoRoot = path.resolve(fileURLToPath(import.meta.url), '..', '..', '..', '..');
+      const scriptPath = path.join(repoRoot, 'scripts', 'export-ig-story.mjs');
+      if (!fs.existsSync(scriptPath)) {
+        sendApiError(res, 500, 'SCRIPT_MISSING', `not found: ${scriptPath}`);
+        return;
+      }
+      const args = [
+        scriptPath,
+        '--project', String(req.params.id),
+        '--file', fileName,
+        '--scale', String(scale),
+        '--base', `http://127.0.0.1:${resolvedPort}`,
+      ];
+      if (list) args.push('--list'); else args.push('--card', String(card), '--stdout');
+      const child = spawn(process.execPath, args, {
+        env: { ...process.env },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let stderrBuf = '';
+      child.stderr.on('data', (chunk) => { stderrBuf += String(chunk); });
+      if (list) {
+        let stdoutBuf = '';
+        child.stdout.on('data', (chunk) => { stdoutBuf += String(chunk); });
+        child.on('exit', (code) => {
+          if (code === 0) {
+            res.type('application/json').send(stdoutBuf);
+          } else {
+            sendApiError(res, 500, 'EXPORT_FAILED', `exit=${code}: ${stderrBuf.slice(0, 800)}`);
+          }
+        });
+      } else {
+        res.type('image/png');
+        res.setHeader(
+          'Content-Disposition',
+          `attachment; filename="${fileName.replace(/\.[^.]+$/, '')}-card${card}.png"`,
+        );
+        child.stdout.pipe(res);
+        child.on('exit', (code) => {
+          if (code !== 0 && !res.headersSent) {
+            sendApiError(res, 500, 'EXPORT_FAILED', `exit=${code}: ${stderrBuf.slice(0, 800)}`);
+          }
+        });
+      }
+    } catch (err) {
+      sendApiError(res, 500, 'EXPORT_FAILED', String(err));
+    }
+  });
+
   app.get('/api/projects/:id/files/:name/preview', async (req, res) => {
     try {
       const file = await readProjectFile(

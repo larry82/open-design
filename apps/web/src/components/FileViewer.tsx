@@ -2902,6 +2902,25 @@ function HtmlViewer({
                     <span className="share-menu-icon"><Icon name="file-code" size={14} /></span>
                     <span>{t('fileViewer.exportHtml')}</span>
                   </button>
+                  {/* [BAiR] Export 1080x1920 PNG of the first .dc-card artboard
+                      via daemon → headless Chromium pipeline (scripts/export-ig-story.mjs).
+                      Useful for IG Story / 9:16 surfaces. Defaults to card 0;
+                      pick another by adding ?card=N to the URL the menu opens. */}
+                  <button
+                    type="button"
+                    className="share-menu-item"
+                    role="menuitem"
+                    onClick={() => {
+                      setShareMenuOpen(false);
+                      const url =
+                        `/api/projects/${encodeURIComponent(projectId)}` +
+                        `/export-ig-story?file=${encodeURIComponent(file.name)}&card=0`;
+                      window.open(url, '_blank');
+                    }}
+                  >
+                    <span className="share-menu-icon"><Icon name="download" size={14} /></span>
+                    <span>Export IG Story (1080×1920 PNG)</span>
+                  </button>
                   {/* Export as Markdown — pass-through download of the
                       artifact source with a `.md` extension. No conversion
                       runs; the file body is identical to the Source view.
