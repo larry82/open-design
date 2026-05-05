@@ -33,6 +33,8 @@
     "@open-design/platform": "workspace:*",
     "@open-design/sidecar": "workspace:*",
     "@open-design/sidecar-proto": "workspace:*",
+    "jszip": "^3.10.1",
+    "modern-screenshot": "^4.7.0",
     "next": "^16.2.4",
     "openai": "^6.35.0",
     "react": "^18.3.1",
