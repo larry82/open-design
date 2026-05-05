@@ -41,8 +41,13 @@ function resolveDevTsconfigPath() {
 
 const DEV_TSCONFIG_PATH = resolveDevTsconfigPath();
 
+const EXTRA_DEV_ORIGINS = (process.env.OD_WEB_EXTRA_DEV_ORIGINS ?? '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+
 const nextConfig: NextConfig = {
-  allowedDevOrigins: ['127.0.0.1'],
+  allowedDevOrigins: ['127.0.0.1', ...EXTRA_DEV_ORIGINS],
   reactStrictMode: true,
   ...(DEV_TSCONFIG_PATH ? { typescript: { tsconfigPath: DEV_TSCONFIG_PATH } } : {}),
   // Keep the bundle output predictable so the daemon's STATIC_DIR can point

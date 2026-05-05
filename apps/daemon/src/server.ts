@@ -1058,15 +1058,20 @@ export async function startServer({ port = 7456, host = process.env.OD_BIND_HOST
     if (webPort && webPort !== resolvedPort) ports.push(webPort);
     const schemes = ['http', 'https'];
     const loopbackHosts = ['127.0.0.1', 'localhost', '[::1]'];
-    return new Set(
-      ports.flatMap((p) => [
+    const extraTrusted = (process.env.OD_DAEMON_TRUSTED_ORIGINS ?? '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    return new Set([
+      ...ports.flatMap((p) => [
         ...schemes.flatMap((s) => loopbackHosts.map((h) => `${s}://${h}:${p}`)),
         // When bound to a specific non-loopback address (e.g. Tailscale,
         // LAN IP, or 0.0.0.0), allow browser requests from that address
         // too so the documented --host escape hatch remains usable.
         ...schemes.map((s) => `${s}://${host}:${p}`),
       ]),
-    );
+      ...extraTrusted,
+    ]);
   }
 
   // Routes that serve content to sandboxed iframes (Origin: null) for
@@ -4623,11 +4628,16 @@ export function isLocalSameOrigin(req, port) {
   if (origin == null || origin === '') return true;
 
   const schemes = ['http', 'https'];
-  const allowedOrigins = new Set(
-    ports.flatMap((p) => [
+  const extraTrusted = (process.env.OD_DAEMON_TRUSTED_ORIGINS ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const allowedOrigins = new Set([
+    ...ports.flatMap((p) => [
       ...schemes.flatMap((s) => loopbackHosts.map((h) => `${s}://${h}:${p}`)),
       ...schemes.map((s) => `${s}://${bindHost}:${p}`),
     ]),
-  );
+    ...extraTrusted,
+  ]);
   return allowedOrigins.has(String(origin));
 }
