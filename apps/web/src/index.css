@@ -6712,6 +6712,43 @@ button.connector-action.is-loading {
   opacity: 0.5;
   cursor: not-allowed;
 }
+.export-artboards-modal {
+  width: min(560px, calc(100vw - 32px));
+}
+.export-artboards-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 8px;
+}
+.export-artboards-option {
+  display: flex;
+  flex-direction: row !important;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+  color: var(--text);
+}
+.export-artboards-option input {
+  margin-top: 2px;
+}
+.export-artboards-option span {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.export-artboards-option strong {
+  font-size: 13px;
+  color: var(--text);
+}
+.export-artboards-option small {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
 .deploy-modal {
   width: min(760px, calc(100vw - 32px));
   max-height: calc(100vh - 32px);

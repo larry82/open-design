@@ -31,6 +31,7 @@ import {
   exportReactComponentAsZip,
   openSandboxedPreviewInNewTab,
 } from '../runtime/exports';
+import { exportHtmlArtboards, type HtmlArtboardExportScope } from '../runtime/html-artboard-export';
 import { buildReactComponentSrcdoc } from '../runtime/react-component';
 import { buildSrcdoc } from '../runtime/srcdoc';
 import { parseForceInline, shouldUrlLoadHtmlPreview } from './file-viewer-render-mode';
@@ -2029,6 +2030,10 @@ function HtmlViewer({
   const [zoom, setZoom] = useState(100);
   const [presentMenuOpen, setPresentMenuOpen] = useState(false);
   const [shareMenuOpen, setShareMenuOpen] = useState(false);
+  const [exportModalOpen, setExportModalOpen] = useState(false);
+  const [exportScope, setExportScope] = useState<HtmlArtboardExportScope>('current');
+  const [exportingArtboards, setExportingArtboards] = useState(false);
+  const [exportNotice, setExportNotice] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
   // Template save UX. We surface a transient "Saved" pill in the share
   // menu so the user gets feedback without a noisy toast layer.
   const [savingTemplate, setSavingTemplate] = useState(false);
@@ -2392,6 +2397,12 @@ function HtmlViewer({
   }, [shareMenuOpen]);
 
   useEffect(() => {
+    if (!exportNotice) return;
+    const timeout = window.setTimeout(() => setExportNotice(null), 5000);
+    return () => window.clearTimeout(timeout);
+  }, [exportNotice]);
+
+  useEffect(() => {
     if (!inTabPresent) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setInTabPresent(false);
@@ -2557,6 +2568,49 @@ function HtmlViewer({
     window.setTimeout(() => setCopiedDeployLink(false), 1800);
   }
 
+  async function handleExportArtboards() {
+    if (!source || exportingArtboards) return;
+
+    setExportingArtboards(true);
+    setExportNotice(null);
+
+    try {
+      const html = hasRelativeAssetRefs(source)
+        ? await inlineRelativeAssets(source, projectId, file.name)
+        : source;
+      const result = await exportHtmlArtboards({
+        fileName: file.name,
+        html,
+        baseHref: projectRawUrl(projectId, baseDirFor(file.name)),
+        scope: exportScope,
+        currentArtboardIndex: slideState?.active ?? 0,
+      });
+      const message =
+        result.scope === 'current'
+          ? 'Exported the current artboard as a PNG.'
+          : `Exported ${result.exportedCount} artboards as a ZIP.`;
+      console.info('[FileViewer] artboard export complete', {
+        projectId,
+        fileName: file.name,
+        scope: result.scope,
+        exportedCount: result.exportedCount,
+      });
+      setExportNotice({ tone: 'success', message });
+      setExportModalOpen(false);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to export artboards.';
+      console.error('[FileViewer] artboard export failed', {
+        projectId,
+        fileName: file.name,
+        scope: exportScope,
+        error,
+      });
+      setExportNotice({ tone: 'error', message });
+    } finally {
+      setExportingArtboards(false);
+    }
+  }
+
   function presentInThisTab() {
     setPresentMenuOpen(false);
     setInTabPresent(true);
@@ -2637,6 +2691,7 @@ function HtmlViewer({
 
   const showPresent = effectiveDeck && source !== null;
   const canShare = source !== null;
+  const canExportArtboards = source !== null && /\bdc-card\b/i.test(source);
   const exportTitle = file.name.replace(/\.html?$/i, '') || file.name;
   const canPptx = canShare && Boolean(onExportAsPptx) && !streaming;
   const boardAvailable = source !== null;
@@ -2824,17 +2879,32 @@ function HtmlViewer({
             </div>
           ) : null}
           {canShare ? (
-            <div className="share-menu" ref={shareRef}>
+            <>
               <button
+                type="button"
                 className="viewer-action primary"
-                aria-haspopup="menu"
-                aria-expanded={shareMenuOpen}
-                onClick={() => setShareMenuOpen((v) => !v)}
+                onClick={() => {
+                  setExportScope('current');
+                  setExportModalOpen(true);
+                }}
+                disabled={exportingArtboards || !canExportArtboards}
+                title={canExportArtboards ? undefined : 'This HTML file does not contain any .dc-card artboards.'}
               >
-                <span>{t('fileViewer.shareLabel')}</span>
-                <Icon name="chevron-down" size={11} />
+                <Icon name={exportingArtboards ? 'spinner' : 'download'} size={13} />
+                <span>{exportingArtboards ? 'Exporting…' : 'Export'}</span>
               </button>
-              {shareMenuOpen ? (
+              <div className="share-menu" ref={shareRef}>
+                <button
+                  type="button"
+                  className="viewer-action"
+                  aria-haspopup="menu"
+                  aria-expanded={shareMenuOpen}
+                  onClick={() => setShareMenuOpen((v) => !v)}
+                >
+                  <span>{t('fileViewer.shareLabel')}</span>
+                  <Icon name="chevron-down" size={11} />
+                </button>
+                {shareMenuOpen ? (
                 <div className="share-menu-popover" role="menu">
                   <button
                     type="button"
@@ -2901,25 +2971,6 @@ function HtmlViewer({
                   >
                     <span className="share-menu-icon"><Icon name="file-code" size={14} /></span>
                     <span>{t('fileViewer.exportHtml')}</span>
-                  </button>
-                  {/* [BAiR] Export 1080x1920 PNG of the first .dc-card artboard
-                      via daemon → headless Chromium pipeline (scripts/export-ig-story.mjs).
-                      Useful for IG Story / 9:16 surfaces. Defaults to card 0;
-                      pick another by adding ?card=N to the URL the menu opens. */}
-                  <button
-                    type="button"
-                    className="share-menu-item"
-                    role="menuitem"
-                    onClick={() => {
-                      setShareMenuOpen(false);
-                      const url =
-                        `/api/projects/${encodeURIComponent(projectId)}` +
-                        `/export-ig-story?file=${encodeURIComponent(file.name)}&card=0`;
-                      window.open(url, '_blank');
-                    }}
-                  >
-                    <span className="share-menu-icon"><Icon name="download" size={14} /></span>
-                    <span>Export IG Story (1080×1920 PNG)</span>
                   </button>
                   {/* Export as Markdown — pass-through download of the
                       artifact source with a `.md` extension. No conversion
@@ -2991,11 +3042,21 @@ function HtmlViewer({
                   </button>
                 </div>
               ) : null}
-            </div>
+              </div>
+            </>
           ) : null}
         </div>
       </div>
       <div className="viewer-body" ref={previewBodyRef}>
+        {exportNotice ? (
+          <LiveArtifactRefreshNotice
+            tone={exportNotice.tone}
+            message={exportNotice.message}
+            action={exportNotice.tone === 'success' ? 'Your download should start automatically.' : 'Open the console for debug details, then try again.'}
+            onDismiss={() => setExportNotice(null)}
+            dismissLabel={t('common.close')}
+          />
+        ) : null}
         {source === null ? (
           <div className="viewer-empty">{t('fileViewer.loading')}</div>
         ) : mode === 'preview' ? (
@@ -3105,6 +3166,67 @@ function HtmlViewer({
               srcDoc={srcDoc}
             />
           )}
+        </div>
+      ) : null}
+      {exportModalOpen && canExportArtboards ? (
+        <div className="modal-backdrop" role="presentation" onClick={() => !exportingArtboards && setExportModalOpen(false)}>
+          <div className="modal export-artboards-modal" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-head">
+              <div className="kicker">PNG EXPORT</div>
+              <h2>Export artboards</h2>
+              <p className="subtitle">Capture the rendered .dc-card artboards as PNG files at 2× resolution.</p>
+            </div>
+            <div className="export-artboards-form">
+              <label className="export-artboards-option">
+                <input
+                  type="radio"
+                  name="artboard-export-scope"
+                  value="current"
+                  checked={exportScope === 'current'}
+                  onChange={() => setExportScope('current')}
+                />
+                <span>
+                  <strong>Current artboard</strong>
+                  <small>Exports the artboard currently in view as a PNG.</small>
+                </span>
+              </label>
+              <label className="export-artboards-option">
+                <input
+                  type="radio"
+                  name="artboard-export-scope"
+                  value="all"
+                  checked={exportScope === 'all'}
+                  onChange={() => setExportScope('all')}
+                />
+                <span>
+                  <strong>All artboards</strong>
+                  <small>Exports every .dc-card into a single ZIP archive.</small>
+                </span>
+              </label>
+              <p className="hint">Export waits for web fonts, skips obvious editor chrome like .twk-panel when possible, and logs debug details to the console if capture fails.</p>
+            </div>
+            <div className="modal-foot">
+              <button
+                type="button"
+                className="ghost-link button-like"
+                disabled={exportingArtboards}
+                onClick={() => setExportModalOpen(false)}
+              >
+                {t('common.cancel')}
+              </button>
+              <button
+                type="button"
+                className="viewer-action primary"
+                disabled={exportingArtboards || source === null || !canExportArtboards}
+                onClick={() => {
+                  void handleExportArtboards();
+                }}
+              >
+                <Icon name={exportingArtboards ? 'spinner' : 'download'} size={13} />
+                <span>{exportingArtboards ? 'Exporting…' : 'Export'}</span>
+              </button>
+            </div>
+          </div>
         </div>
       ) : null}
       {deployModalOpen ? (

@@ -165,6 +165,35 @@ describe('FileViewer SVG artifacts', () => {
     expect(markup).not.toContain('data-od-render-mode="url-load"');
   });
 
+  it('shows the new Export button for HTML artboards in the toolbar', () => {
+    const file = baseFile({
+      name: 'artboards.html',
+      path: 'artboards.html',
+      mime: 'text/html',
+      kind: 'html',
+      artifactManifest: {
+        version: 1,
+        kind: 'html',
+        title: 'Artboards',
+        entry: 'artboards.html',
+        renderer: 'html',
+        exports: ['html'],
+      },
+    });
+
+    const markup = renderToStaticMarkup(
+      <FileViewer
+        projectId="project-1"
+        file={file}
+        liveHtml={'<html><body><div class="dc-card" data-artboard-name="Cover">hi</div></body></html>'}
+      />,
+    );
+
+    expect(markup).toContain('Export');
+    expect(markup).toContain('Share');
+    expect(markup).toContain('viewer-action primary');
+  });
+
   it('renders unsafe SVG source as escaped text instead of executable markup', () => {
     const file = baseFile({ name: 'unsafe.svg', path: 'unsafe.svg', mime: 'image/svg+xml' });
     const unsafeSource = [
