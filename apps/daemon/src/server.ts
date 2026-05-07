@@ -29,6 +29,15 @@ import { validateLinkedDirs } from './linked-dirs.js';
 import { listCodexPets, readCodexPetSpritesheet } from './codex-pets.js';
 import { syncCommunityPets } from './community-pets-sync.js';
 import { listDesignSystems, readDesignSystem } from './design-systems.js';
+import {
+  filterDesignSystemsForPublicViewer,
+  isPublicViewerBasicAuthAccepted,
+  isPublicViewerDesignSystemPathAllowed,
+  isPublicViewerStoreAllowed,
+  isPublicViewerWriteMethod,
+  persistPublicViewerStore,
+  readPublicViewerStore,
+} from './public-viewer.js';
 import { attachAcpSession } from './acp.js';
 import { attachPiRpcSession } from './pi-rpc.js';
 import { createClaudeStreamHandler } from './claude-stream.js';
@@ -1142,6 +1151,39 @@ export async function startServer({ port = 7456, host = process.env.OD_BIND_HOST
     console.warn('[od] Failed to recover stale live artifact refreshes:', error);
   });
 
+  app.use((req, res, next) => {
+    persistPublicViewerStore(req, res);
+
+    const lockedStore = readPublicViewerStore(req);
+    if (!lockedStore) return next();
+
+    const publicViewerUsername = process.env.OD_PUBLIC_VIEWER_USERNAME?.trim() || null;
+    const publicViewerPassword = process.env.OD_PUBLIC_VIEWER_PASSWORD?.trim() || null;
+    if (
+      !isPublicViewerBasicAuthAccepted(req.headers.authorization, {
+        username: publicViewerUsername,
+        password: publicViewerPassword,
+      })
+    ) {
+      res.setHeader('WWW-Authenticate', 'Basic realm="Open Design Public Viewer", charset="UTF-8"');
+      return res.status(401).type('text/plain').send('Unauthorized');
+    }
+
+    if (!isPublicViewerDesignSystemPathAllowed(req.path, lockedStore)) {
+      return res.status(404).type('text/plain').send('not found');
+    }
+
+    if (req.path.startsWith('/api/') && isPublicViewerWriteMethod(req.method)) {
+      return res.status(403).json({ error: 'public viewer is read-only' });
+    }
+
+    next();
+  });
+
+  app.get('/robots.txt', (_req, res) => {
+    res.type('text/plain').send('User-agent: *\nDisallow: /\n');
+  });
+
   if (fs.existsSync(STATIC_DIR)) {
     app.use(express.static(STATIC_DIR));
   }
@@ -1938,11 +1980,13 @@ export async function startServer({ port = 7456, host = process.env.OD_BIND_HOST
     }
   });
 
-  app.get('/api/design-systems', async (_req, res) => {
+  app.get('/api/design-systems', async (req, res) => {
     try {
       const systems = await listDesignSystems(DESIGN_SYSTEMS_DIR);
       res.json({
-        designSystems: systems.map(({ body, ...rest }) => rest),
+        designSystems: filterDesignSystemsForPublicViewer(systems, readPublicViewerStore(req)).map(
+          ({ body, ...rest }) => rest,
+        ),
       });
     } catch (err) {
       res.status(500).json({ error: String(err) });
@@ -1951,6 +1995,10 @@ export async function startServer({ port = 7456, host = process.env.OD_BIND_HOST
 
   app.get('/api/design-systems/:id', async (req, res) => {
     try {
+      const lockedStore = readPublicViewerStore(req);
+      if (lockedStore && !isPublicViewerStoreAllowed(lockedStore, req.params.id)) {
+        return res.status(404).json({ error: 'design system not found' });
+      }
       const body = await readDesignSystem(DESIGN_SYSTEMS_DIR, req.params.id);
       if (body === null)
         return res.status(404).json({ error: 'design system not found' });
@@ -1992,6 +2040,10 @@ export async function startServer({ port = 7456, host = process.env.OD_BIND_HOST
   // file shows up on the next view, no rebuild needed.
   app.get('/api/design-systems/:id/preview', async (req, res) => {
     try {
+      const lockedStore = readPublicViewerStore(req);
+      if (lockedStore && !isPublicViewerStoreAllowed(lockedStore, req.params.id)) {
+        return res.status(404).type('text/plain').send('not found');
+      }
       const body = await readDesignSystem(DESIGN_SYSTEMS_DIR, req.params.id);
       if (body === null)
         return res.status(404).type('text/plain').send('not found');
@@ -2007,6 +2059,10 @@ export async function startServer({ port = 7456, host = process.env.OD_BIND_HOST
   // /preview: built at request time, no caching.
   app.get('/api/design-systems/:id/showcase', async (req, res) => {
     try {
+      const lockedStore = readPublicViewerStore(req);
+      if (lockedStore && !isPublicViewerStoreAllowed(lockedStore, req.params.id)) {
+        return res.status(404).type('text/plain').send('not found');
+      }
       const body = await readDesignSystem(DESIGN_SYSTEMS_DIR, req.params.id);
       if (body === null)
         return res.status(404).type('text/plain').send('not found');
