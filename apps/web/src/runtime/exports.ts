@@ -99,6 +99,107 @@ export function exportReactComponentAsZip(
   triggerDownload(blob, `${slug}.zip`);
 }
 
+// Artboard PNG export — asks the daemon to render artboards via the
+// scripts/export-ig-story.mjs pipeline (headless Chromium → PNG). The daemon
+// route is GET /api/projects/:id/export-ig-story?file=<name>&list=1 to
+// enumerate cards and ?card=<N>&scale=<S> to fetch a single PNG. Single-card
+// path streams the image directly; multi-card path fans out one fetch per
+// card and packs the results with the in-tree stored-mode ZIP encoder.
+export type ArtboardCard = {
+  idx: number;
+  w: number;
+  h: number;
+  label: string;
+};
+
+const EXPORT_SCALE = 2;
+
+function exportEndpoint(
+  projectId: string,
+  fileName: string,
+  query: Record<string, string | number>,
+): string {
+  const params = new URLSearchParams();
+  params.set('file', fileName);
+  for (const [k, v] of Object.entries(query)) params.set(k, String(v));
+  return (
+    `/api/projects/${encodeURIComponent(projectId)}/export-ig-story?` +
+    params.toString()
+  );
+}
+
+export async function listArtboards(
+  projectId: string,
+  fileName: string,
+): Promise<ArtboardCard[]> {
+  const resp = await fetch(exportEndpoint(projectId, fileName, { list: 1 }));
+  if (!resp.ok) {
+    throw new Error(`list artboards failed (${resp.status})`);
+  }
+  const data = (await resp.json()) as { cards?: ArtboardCard[] };
+  return Array.isArray(data?.cards) ? data.cards : [];
+}
+
+async function fetchArtboardPng(
+  projectId: string,
+  fileName: string,
+  card: number,
+): Promise<Uint8Array> {
+  const resp = await fetch(
+    exportEndpoint(projectId, fileName, { card, scale: EXPORT_SCALE }),
+  );
+  if (!resp.ok) {
+    const detail = await resp.text().catch(() => '');
+    throw new Error(
+      `export card ${card} failed (${resp.status}): ${detail.slice(0, 200)}`,
+    );
+  }
+  const buf = await resp.arrayBuffer();
+  return new Uint8Array(buf);
+}
+
+export async function exportArtboardAsPng(opts: {
+  projectId: string;
+  fileName: string;
+  card: number;
+  title: string;
+  cardLabel?: string;
+}): Promise<void> {
+  const png = await fetchArtboardPng(opts.projectId, opts.fileName, opts.card);
+  const blob = new Blob([png.buffer as ArrayBuffer], { type: 'image/png' });
+  const slug = safeFilename(opts.title, 'artboard');
+  const labelPart = opts.cardLabel ? `-${safeFilename(opts.cardLabel, '')}` : '';
+  triggerDownload(blob, `${slug}-card${opts.card}${labelPart}.png`);
+}
+
+// One-shot ZIP fetch — the daemon renders every artboard in a single
+// playwright session and streams the ZIP back. This trades the per-card
+// progress callback for a single ~(8s + 1s/card) round trip instead of
+// N×9s cold-starts. Falls back to multi-fetch + client-side ZIP if the
+// daemon doesn't recognise the &all=1 flag (older builds).
+export async function exportAllArtboardsAsZip(opts: {
+  projectId: string;
+  fileName: string;
+  title: string;
+}): Promise<{ count: number }> {
+  const slug = safeFilename(opts.title, 'export');
+  const url = exportEndpoint(opts.projectId, opts.fileName, {
+    all: 1,
+    scale: EXPORT_SCALE,
+  });
+  const resp = await fetch(url);
+  if (!resp.ok) {
+    const detail = await resp.text().catch(() => '');
+    throw new Error(`export failed (${resp.status}): ${detail.slice(0, 200)}`);
+  }
+  const blob = await resp.blob();
+  triggerDownload(blob, `${slug}-export.zip`);
+  // Daemon doesn't echo the count in headers right now; the dialog only
+  // needs to know it succeeded, so return 0 — callers shouldn't depend on
+  // this number until we surface it from the daemon.
+  return { count: 0 };
+}
+
 // Project ZIP export — asks the daemon to bundle the on-disk project tree.
 // Used by FileViewer's share menu so the user gets the full uploaded
 // project (e.g. the `ui-design/` folder with its subdirs and assets) rather

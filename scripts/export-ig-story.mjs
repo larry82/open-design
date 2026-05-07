@@ -23,9 +23,9 @@
  */
 
 import { argv, env, exit, stdout, stderr } from 'node:process';
-import { writeFileSync } from 'node:fs';
+import { writeFileSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { dirname, resolve } from 'node:path';
+import { dirname, resolve, join } from 'node:path';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
@@ -40,7 +40,7 @@ const PW_PATH = resolve(
 const { chromium } = await import(PW_PATH);
 
 function parseArgs(args) {
-  const out = { card: 0, scale: 2, list: false, stdout: false };
+  const out = { card: 0, scale: 2, list: false, stdout: false, all: false };
   for (let i = 2; i < args.length; i++) {
     const k = args[i];
     const v = args[i + 1];
@@ -51,15 +51,21 @@ function parseArgs(args) {
       case '--scale':    out.scale    = Number(v); i++; break;
       case '--out':      out.out      = v; i++; break;
       case '--base':     out.base     = v; i++; break;
+      case '--out-dir':  out.outDir   = v; i++; break;
       case '--list':     out.list     = true; break;
       case '--stdout':   out.stdout   = true; break;
+      case '--all':      out.all      = true; break;
       default:
         stderr.write(`unknown arg: ${k}\n`);
         exit(1);
     }
   }
   if (!out.project || !out.file) {
-    stderr.write('usage: export-ig-story.mjs --project <id> --file <name.html> [--card N] [--out path | --stdout] [--scale 2] [--list] [--base http://host:port]\n');
+    stderr.write('usage: export-ig-story.mjs --project <id> --file <name.html> [--card N] [--out path | --stdout] [--all --out-dir DIR] [--scale 2] [--list] [--base http://host:port]\n');
+    exit(1);
+  }
+  if (out.all && !out.outDir) {
+    stderr.write('--all requires --out-dir <dir>\n');
     exit(1);
   }
   out.base ||= env.OD_DAEMON_BASE || 'http://127.0.0.1:7456';
@@ -114,6 +120,35 @@ try {
 
   if (opts.list) {
     stdout.write(JSON.stringify({ url: rawUrl, cards }, null, 2) + '\n');
+  } else if (opts.all) {
+    // Render every artboard in one browser session (one cold-start, one
+    // navigation, N screenshots) and write them to --out-dir. The daemon
+    // packages the directory into a ZIP for the client. stdout receives a
+    // single-line JSON manifest the daemon parses to learn what it should
+    // pack and how to label each entry.
+    mkdirSync(opts.outDir, { recursive: true });
+    const handles = await page.$$('.dc-card, [class*="dc-card"]');
+    const manifest = [];
+    for (let i = 0; i < cards.length; i++) {
+      const handle = handles[i];
+      if (!handle) {
+        stderr.write(`card index ${i} not resolvable; skipping\n`);
+        continue;
+      }
+      const buf = await handle.screenshot({ type: 'png' });
+      const fileName = `${String(i).padStart(2, '0')}.png`;
+      writeFileSync(join(opts.outDir, fileName), buf);
+      manifest.push({
+        idx: cards[i].idx,
+        file: fileName,
+        label: cards[i].label || '',
+        w: cards[i].w,
+        h: cards[i].h,
+        bytes: buf.length,
+      });
+      stderr.write(`✓ card ${i}: ${buf.length} bytes\n`);
+    }
+    stdout.write(JSON.stringify({ url: rawUrl, cards: manifest }) + '\n');
   } else {
     if (opts.card < 0 || opts.card >= cards.length) {
       stderr.write(`card index ${opts.card} out of range (found ${cards.length})\n`);

@@ -9,6 +9,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
 import net from 'node:net';
+import JSZip from 'jszip';
 import { composeSystemPrompt } from './prompts/system.js';
 import { createCommandInvocation } from '@open-design/platform';
 import {
@@ -2824,14 +2825,19 @@ export async function startServer({ port = 7456, host = process.env.OD_BIND_HOST
     }
   });
 
-  // [BAiR] Export an HTML artifact's 1080x1920 artboard (.dc-card) as a PNG
+  // [BAiR] Export an HTML artifact's 1080x1920 artboards (.dc-card) as PNGs
   // suitable for IG Story / 9:16 surfaces. Spawns scripts/export-ig-story.mjs.
-  // GET ?file=<name.html>&card=<n>           → image/png
+  // GET ?file=<name.html>&card=<n>           → image/png  (single artboard)
   // GET ?file=<name.html>&list=1             → JSON { url, cards }
+  // GET ?file=<name.html>&all=1              → application/zip (one cold-start
+  //                                            for the whole file; renders all
+  //                                            artboards in one playwright
+  //                                            session and packs them).
   app.get('/api/projects/:id/export-ig-story', async (req, res) => {
     try {
       const fileName = String(req.query.file || '');
       const list = req.query.list === '1' || req.query.list === 'true';
+      const all = req.query.all === '1' || req.query.all === 'true';
       const card = Math.max(0, Number(req.query.card ?? 0) | 0);
       const scale = Math.max(1, Math.min(4, Number(req.query.scale ?? 2)));
       if (!fileName) {
@@ -2851,13 +2857,24 @@ export async function startServer({ port = 7456, host = process.env.OD_BIND_HOST
         '--scale', String(scale),
         '--base', `http://127.0.0.1:${resolvedPort}`,
       ];
-      if (list) args.push('--list'); else args.push('--card', String(card), '--stdout');
+
+      let workDir = null;
+      if (list) {
+        args.push('--list');
+      } else if (all) {
+        workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'od-export-all-'));
+        args.push('--all', '--out-dir', workDir);
+      } else {
+        args.push('--card', String(card), '--stdout');
+      }
+
       const child = spawn(process.execPath, args, {
         env: { ...process.env },
         stdio: ['ignore', 'pipe', 'pipe'],
       });
       let stderrBuf = '';
       child.stderr.on('data', (chunk) => { stderrBuf += String(chunk); });
+
       if (list) {
         let stdoutBuf = '';
         child.stdout.on('data', (chunk) => { stdoutBuf += String(chunk); });
@@ -2866,6 +2883,45 @@ export async function startServer({ port = 7456, host = process.env.OD_BIND_HOST
             res.type('application/json').send(stdoutBuf);
           } else {
             sendApiError(res, 500, 'EXPORT_FAILED', `exit=${code}: ${stderrBuf.slice(0, 800)}`);
+          }
+        });
+      } else if (all) {
+        let stdoutBuf = '';
+        child.stdout.on('data', (chunk) => { stdoutBuf += String(chunk); });
+        child.on('exit', async (code) => {
+          try {
+            if (code !== 0) {
+              sendApiError(res, 500, 'EXPORT_FAILED', `exit=${code}: ${stderrBuf.slice(0, 800)}`);
+              return;
+            }
+            const manifest = JSON.parse(stdoutBuf);
+            const cards = Array.isArray(manifest?.cards) ? manifest.cards : [];
+            const zip = new JSZip();
+            for (let i = 0; i < cards.length; i++) {
+              const entry = cards[i];
+              const buf = await fs.promises.readFile(path.join(workDir, entry.file));
+              const labelSlug = String(entry.label || '')
+                .replace(/[^\w.\-]+/g, '-')
+                .replace(/^-+|-+$/g, '')
+                .slice(0, 60);
+              const seq = String(i).padStart(2, '0');
+              const namePart = labelSlug ? `${seq}-${labelSlug}` : `${seq}-card${entry.idx}`;
+              zip.file(`${namePart}.png`, buf);
+            }
+            const zipBuf = await zip.generateAsync({ type: 'nodebuffer', compression: 'STORE' });
+            const baseSlug = fileName.replace(/\.[^.]+$/, '').replace(/[^\w.\-]+/g, '-').slice(0, 60) || 'export';
+            res.type('application/zip');
+            res.setHeader(
+              'Content-Disposition',
+              `attachment; filename="${baseSlug}-export.zip"`,
+            );
+            res.send(zipBuf);
+          } catch (err) {
+            if (!res.headersSent) {
+              sendApiError(res, 500, 'EXPORT_FAILED', String(err));
+            }
+          } finally {
+            if (workDir) fs.promises.rm(workDir, { recursive: true, force: true }).catch(() => {});
           }
         });
       } else {

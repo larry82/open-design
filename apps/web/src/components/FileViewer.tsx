@@ -31,6 +31,7 @@ import {
   exportReactComponentAsZip,
   openSandboxedPreviewInNewTab,
 } from '../runtime/exports';
+import { ExportArtboardsDialog } from './ExportArtboardsDialog';
 import { buildReactComponentSrcdoc } from '../runtime/react-component';
 import { buildSrcdoc } from '../runtime/srcdoc';
 import { parseForceInline, shouldUrlLoadHtmlPreview } from './file-viewer-render-mode';
@@ -2029,6 +2030,7 @@ function HtmlViewer({
   const [zoom, setZoom] = useState(100);
   const [presentMenuOpen, setPresentMenuOpen] = useState(false);
   const [shareMenuOpen, setShareMenuOpen] = useState(false);
+  const [exportArtboardsOpen, setExportArtboardsOpen] = useState(false);
   // Template save UX. We surface a transient "Saved" pill in the share
   // menu so the user gets feedback without a noisy toast layer.
   const [savingTemplate, setSavingTemplate] = useState(false);
@@ -2902,24 +2904,21 @@ function HtmlViewer({
                     <span className="share-menu-icon"><Icon name="file-code" size={14} /></span>
                     <span>{t('fileViewer.exportHtml')}</span>
                   </button>
-                  {/* [BAiR] Export 1080x1920 PNG of the first .dc-card artboard
-                      via daemon → headless Chromium pipeline (scripts/export-ig-story.mjs).
-                      Useful for IG Story / 9:16 surfaces. Defaults to card 0;
-                      pick another by adding ?card=N to the URL the menu opens. */}
+                  {/* [BAiR] Export each .dc-card artboard as PNG via the daemon's
+                      headless Chromium pipeline (scripts/export-ig-story.mjs).
+                      Single-card path streams one PNG; "all" path fans out one
+                      fetch per card and packs them into a ZIP client-side. */}
                   <button
                     type="button"
                     className="share-menu-item"
                     role="menuitem"
                     onClick={() => {
                       setShareMenuOpen(false);
-                      const url =
-                        `/api/projects/${encodeURIComponent(projectId)}` +
-                        `/export-ig-story?file=${encodeURIComponent(file.name)}&card=0`;
-                      window.open(url, '_blank');
+                      setExportArtboardsOpen(true);
                     }}
                   >
                     <span className="share-menu-icon"><Icon name="download" size={14} /></span>
-                    <span>Export IG Story (1080×1920 PNG)</span>
+                    <span>Export PNG (artboards)…</span>
                   </button>
                   {/* Export as Markdown — pass-through download of the
                       artifact source with a `.md` extension. No conversion
@@ -3255,6 +3254,14 @@ function HtmlViewer({
             </div>
           </div>
         </div>
+      ) : null}
+      {exportArtboardsOpen ? (
+        <ExportArtboardsDialog
+          projectId={projectId}
+          fileName={file.name}
+          exportTitle={exportTitle}
+          onClose={() => setExportArtboardsOpen(false)}
+        />
       ) : null}
     </div>
   );
