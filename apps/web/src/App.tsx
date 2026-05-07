@@ -4,6 +4,7 @@ import type { CreateInput } from './components/NewProjectPanel';
 import { PetOverlay } from './components/pet/PetOverlay';
 import { migrateCustomPetAtlas } from './components/pet/pets';
 import { ProjectView } from './components/ProjectView';
+import { PublicViewer } from './components/PublicViewer';
 import {
   SettingsDialog,
   type SettingsSection,
@@ -17,6 +18,7 @@ import {
   fetchSkills,
 } from './providers/registry';
 import { navigate, useRoute } from './router';
+import { readPublicViewerStoreFromLocation } from './public-viewer';
 import {
   fetchDaemonConfig,
   DEFAULT_PET,
@@ -83,6 +85,7 @@ export function App() {
   // instead of an "empty" page that flickers before data lands.
   const [bootstrapping, setBootstrapping] = useState(true);
   const route = useRoute();
+  const publicViewerStore = readPublicViewerStoreFromLocation();
 
   // Sync theme preference to the <html> element so CSS variables pick it up.
   // useLayoutEffect (vs useEffect) fires before the browser paints, so a
@@ -124,6 +127,17 @@ export function App() {
       const alive = await daemonIsLive();
       if (cancelled) return;
       setDaemonLive(alive);
+
+      if (publicViewerStore) {
+        const dsList = alive
+          ? await fetchDesignSystems()
+          : [] as DesignSystemSummary[];
+        if (cancelled) return;
+        setDesignSystems(dsList);
+        setBootstrapping(false);
+        return;
+      }
+
       const [
         agentList,
         skillList,
@@ -224,7 +238,7 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [publicViewerStore]);
 
   // One-shot self-healing migration for pets adopted before the
   // overlay learned atlas-row switching. If the stored pet is a
@@ -516,13 +530,19 @@ export function App() {
   // saved a template inside a project, returning home should reflect it
   // immediately in the From-template tab without forcing a page reload.
   useEffect(() => {
-    if (route.kind !== 'home') return;
+    if (publicViewerStore || route.kind !== 'home') return;
     void refreshTemplates();
-  }, [route.kind, refreshTemplates]);
+  }, [publicViewerStore, route.kind, refreshTemplates]);
 
   return (
     <>
-      {activeProject ? (
+      {publicViewerStore ? (
+        <PublicViewer
+          systems={designSystems}
+          store={publicViewerStore}
+          loading={bootstrapping}
+        />
+      ) : activeProject ? (
         <ProjectView
           key={activeProject.id}
           project={activeProject}
@@ -569,11 +589,13 @@ export function App() {
           onTogglePet={handleTogglePet}
         />
       )}
-      <PetOverlay
-        pet={config.pet?.enabled ? config.pet : undefined}
-        onTuck={handleTuckPet}
-        onOpenSettings={openPetSettings}
-      />
+      {publicViewerStore ? null : (
+        <PetOverlay
+          pet={config.pet?.enabled ? config.pet : undefined}
+          onTuck={handleTuckPet}
+          onOpenSettings={openPetSettings}
+        />
+      )}
       {settingsOpen ? (
         <SettingsDialog
           initial={config}
