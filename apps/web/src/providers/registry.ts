@@ -6,6 +6,7 @@ import type {
   ConnectorListResponse,
   ConnectorStatusResponse,
 } from '@open-design/contracts';
+import { appendPublicViewerStore } from '../public-viewer';
 import type {
   AgentInfo,
   AppVersionInfo,
@@ -136,7 +137,7 @@ export async function fetchSkill(id: string): Promise<SkillDetail | null> {
 
 export async function fetchDesignSystems(): Promise<DesignSystemSummary[]> {
   try {
-    const resp = await fetch('/api/design-systems');
+    const resp = await fetch(appendPublicViewerStore('/api/design-systems'));
     if (!resp.ok) return [];
     const json = (await resp.json()) as { designSystems: DesignSystemSummary[] };
     return json.designSystems ?? [];
@@ -147,7 +148,7 @@ export async function fetchDesignSystems(): Promise<DesignSystemSummary[]> {
 
 export async function fetchDesignSystem(id: string): Promise<DesignSystemDetail | null> {
   try {
-    const resp = await fetch(`/api/design-systems/${encodeURIComponent(id)}`);
+    const resp = await fetch(appendPublicViewerStore(`/api/design-systems/${encodeURIComponent(id)}`));
     if (!resp.ok) return null;
     return (await resp.json()) as DesignSystemDetail;
   } catch {
@@ -943,7 +944,7 @@ export async function openFolderDialog(): Promise<string | null> {
 
 export async function fetchDesignSystemPreview(id: string): Promise<string | null> {
   try {
-    const resp = await fetch(`/api/design-systems/${encodeURIComponent(id)}/preview`);
+    const resp = await fetch(appendPublicViewerStore(`/api/design-systems/${encodeURIComponent(id)}/preview`));
     if (!resp.ok) return null;
     return await resp.text();
   } catch {
@@ -953,7 +954,7 @@ export async function fetchDesignSystemPreview(id: string): Promise<string | nul
 
 export async function fetchDesignSystemShowcase(id: string): Promise<string | null> {
   try {
-    const resp = await fetch(`/api/design-systems/${encodeURIComponent(id)}/showcase`);
+    const resp = await fetch(appendPublicViewerStore(`/api/design-systems/${encodeURIComponent(id)}/showcase`));
     if (!resp.ok) return null;
     return await resp.text();
   } catch {
